@@ -23,7 +23,8 @@ GOOGLE_SHEET_ID   = os.environ.get("GOOGLE_SHEET_ID", "")
 GOOGLE_CREDS_JSON = os.environ.get("GOOGLE_CREDS_JSON", "")
 RUN_TYPE          = os.environ.get("RUN_TYPE", "MORNING")  # MORNING or AFTERNOON
 
-GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key={GEMINI_API_KEY}"
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
 
 IST = pytz.timezone("Asia/Kolkata")
 
@@ -544,19 +545,27 @@ def score_macro(gift, global_data, vix, fii, part_oi, opts, tech, news):
 def call_gemini(prompt):
     try:
         if not GEMINI_API_KEY:
+            print("ERROR: GEMINI_API_KEY is empty")
             return None
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {"temperature": 0.2, "maxOutputTokens": 1024}
         }
+        print(f"  Calling Gemini ({GEMINI_MODEL})...")
         r = requests.post(GEMINI_URL, json=payload, timeout=30)
+        print(f"  Gemini response status: {r.status_code}")
+        if r.status_code != 200:
+            print(f"  Gemini error body: {r.text[:500]}")
+            return None
         data = r.json()
         if "candidates" in data and data["candidates"]:
-            return data["candidates"][0]["content"]["parts"][0]["text"]
-        print(f"Gemini error: {data}")
+            text = data["candidates"][0]["content"]["parts"][0]["text"]
+            print(f"  Gemini responded OK ({len(text)} chars)")
+            return text
+        print(f"  Gemini unexpected response: {json.dumps(data)[:500]}")
         return None
     except Exception as e:
-        print(f"Gemini call error: {e}")
+        print(f"  Gemini call exception: {e}")
         return None
 
 def build_prompt(display, macro, rzy, bb, vix, fii, opts, news, closes, atr_val):
