@@ -1,0 +1,92 @@
+# ============================================================
+# NIFTY PULSE AUTO — GitHub Actions Schedule
+# Runs automatically Mon-Fri at 9:00 AM and 3:30 PM IST
+# IST = UTC+5:30
+# 9:00 AM IST  = 3:30 AM UTC
+# 3:30 PM IST  = 10:00 AM UTC
+# Friday 4PM IST = 10:30 AM UTC (weekly summary)
+# ============================================================
+
+name: NiftyPulse Auto
+
+on:
+  schedule:
+    # Morning run — 9:00 AM IST (3:30 AM UTC) Mon-Fri
+    - cron: '30 3 * * 1-5'
+    # Afternoon run — 3:30 PM IST (10:00 AM UTC) Mon-Fri
+    - cron: '0 10 * * 1-5'
+    # Weekly summary — Friday 4:00 PM IST (10:30 AM UTC)
+    - cron: '30 10 * * 5'
+
+  # Allow manual trigger from GitHub website
+  workflow_dispatch:
+    inputs:
+      run_type:
+        description: 'Which run to trigger'
+        required: true
+        default: 'MORNING'
+        type: choice
+        options:
+          - MORNING
+          - AFTERNOON
+          - WEEKLY
+
+jobs:
+  run-analysis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      # Step 1: Get the code
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Step 2: Set up Python
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Step 3: Install libraries
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      # Step 4: Determine run type from schedule or manual trigger
+      - name: Set run type
+        id: set_run_type
+        run: |
+          # If manually triggered, use the input
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "RUN_TYPE=${{ github.event.inputs.run_type }}" >> $GITHUB_ENV
+
+          # 3:30 AM UTC = Morning run
+          elif [ "$(date -u +%H%M)" -ge "0325" ] && [ "$(date -u +%H%M)" -le "0345" ]; then
+            echo "RUN_TYPE=MORNING" >> $GITHUB_ENV
+
+          # 10:30 AM UTC on Friday = Weekly summary
+          elif [ "$(date -u +%u)" == "5" ] && [ "$(date -u +%H%M)" -ge "1025" ] && [ "$(date -u +%H%M)" -le "1045" ]; then
+            echo "RUN_TYPE=WEEKLY" >> $GITHUB_ENV
+
+          # 10:00 AM UTC = Afternoon run
+          else
+            echo "RUN_TYPE=AFTERNOON" >> $GITHUB_ENV
+          fi
+
+          echo "Run type set to: $RUN_TYPE"
+
+      # Step 5: Run the analysis
+      - name: Run NiftyPulse Analysis
+        env:
+          GEMINI_API_KEY:    ${{ secrets.GEMINI_API_KEY }}
+          GOOGLE_SHEET_ID:   ${{ secrets.GOOGLE_SHEET_ID }}
+          GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
+          RUN_TYPE:          ${{ env.RUN_TYPE }}
+        run: |
+          python main.py
+
+      # Step 6: Show result in GitHub logs
+      - name: Done
+        run: |
+          echo "✅ NiftyPulse ${{ env.RUN_TYPE }} run complete"
+          echo "Check your Google Sheet for results"
