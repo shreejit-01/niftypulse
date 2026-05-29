@@ -23,16 +23,20 @@ GOOGLE_SHEET_ID   = os.environ.get("GOOGLE_SHEET_ID", "")
 GOOGLE_CREDS_JSON = os.environ.get("GOOGLE_CREDS_JSON", "")
 RUN_TYPE          = os.environ.get("RUN_TYPE", "MORNING")  # MORNING or AFTERNOON
 
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash")
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
 
 IST = pytz.timezone("Asia/Kolkata")
 
 INDICES = {
-    "NIFTY50":    {"yahoo": "^NSEI",               "display": "Nifty 50",          "opt": "NIFTY"},
-    "BANKNIFTY":  {"yahoo": "^NSEBANK",            "display": "Bank Nifty",        "opt": "BANKNIFTY"},
-    "MIDCAP50":   {"yahoo": "NIFTY_MID_SELECT.NS", "display": "Nifty Midcap 50",   "opt": "NIFTY"},
-    "SMALLCAP50": {"yahoo": "NIFTY_SMLCAP_50.NS",  "display": "Nifty Smallcap 50", "opt": "NIFTY"},
+    "NIFTY50":    {"yahoo": "^NSEI",               "display": "Nifty 50",          "opt": "NIFTY",
+                   "yahoo_fallback": "NIFTY50.NS"},
+    "BANKNIFTY":  {"yahoo": "^NSEBANK",            "display": "Bank Nifty",        "opt": "BANKNIFTY",
+                   "yahoo_fallback": "BANKNIFTY.NS"},
+    "MIDCAP50":   {"yahoo": "^NSEMDCP50",          "display": "Nifty Midcap 50",   "opt": "NIFTY",
+                   "yahoo_fallback": "NIFTY_MID_SELECT.NS"},
+    "SMALLCAP50": {"yahoo": "^NSESMCAP",           "display": "Nifty Smallcap 50", "opt": "NIFTY",
+                   "yahoo_fallback": "NIFTY_SMLCAP_50.NS"},
 }
 
 NEWS_FEEDS = [
@@ -166,14 +170,31 @@ def fetch_fii_dii():
     try:
         r = NSE_SESSION.get("https://www.nseindia.com/api/fiidiiTradeReact", timeout=10)
         if r.status_code != 200:
+            print(f"FII/DII HTTP error: {r.status_code}")
             return None
         data = r.json()
         fii = next((d for d in data if d.get("category","").startswith("FII")), None)
         dii = next((d for d in data if d.get("category","").startswith("DII")), None)
+
+        def get_net(row):
+            # NSE changes field names occasionally — try all known variants
+            for field in ["netPurchasesSales","net_purchases_sales","netPurchSales","netPurchase","net"]:
+                if row and field in row:
+                    try: return float(row[field])
+                    except: continue
+            # Last resort: bought - sold
+            if row:
+                try:
+                    bought = float(row.get("buyValue", row.get("bought", row.get("purchase", 0))))
+                    sold   = float(row.get("sellValue", row.get("sold", row.get("sales", 0))))
+                    return bought - sold
+                except: pass
+            return 0
+
         return {
-            "fii_net": float(fii["netPurchasesSales"]) if fii else 0,
-            "dii_net": float(dii["netPurchasesSales"]) if dii else 0,
-            "date": fii["date"] if fii else "—"
+            "fii_net": get_net(fii),
+            "dii_net": get_net(dii),
+            "date": fii.get("date","—") if fii else "—"
         }
     except Exception as e:
         print(f"FII/DII error: {e}")
@@ -765,7 +786,7 @@ def update_dashboard_today(dash_sh, results):
     for i, r in enumerate(results):
         ai = r["ai"]
         row_num = 55 + i
-        dash_sh.update(f"B{row_num}:H{row_num}", [[
+        dash_sh.update(values=[[
             ai.get("signal", "—"),
             str(ai.get("confidence", 0)) + "%",
             ai.get("entry") or "—",
@@ -773,7 +794,7 @@ def update_dashboard_today(dash_sh, results):
             ai.get("stop_loss") or "—",
             ai.get("reasoning", "—"),
             "SKIP" if ai.get("signal_type") == "CONFLICT" else "OPEN 🟡"
-        ]])
+        ]], range_name=f"B{row_num}:H{row_num}")
 
 # ─────────────────────────────────────────────
 # AFTERNOON — close trades, update records
@@ -1024,8 +1045,12 @@ def morning_run(wb):
     for key, idx in INDICES.items():
         print(f"Analysing {idx['display']}...")
         hist = fetch_yahoo(idx["yahoo"], "6mo", "1d")
+        # Try fallback ticker if primary returned insufficient data
+        if (not hist or len(hist["closes"]) < 50) and idx.get("yahoo_fallback"):
+            print(f"  Primary ticker failed, trying fallback: {idx['yahoo_fallback']}")
+            hist = fetch_yahoo(idx["yahoo_fallback"], "6mo", "1d")
         if not hist or len(hist["closes"]) < 50:
-            print(f"  Skipping {key} — insufficient data")
+            print(f"  Skipping {key} — insufficient data from both tickers")
             continue
 
         tech    = get_technicals(hist)
