@@ -23,8 +23,14 @@ GOOGLE_SHEET_ID   = os.environ.get("GOOGLE_SHEET_ID", "")
 GOOGLE_CREDS_JSON = os.environ.get("GOOGLE_CREDS_JSON", "")
 RUN_TYPE          = os.environ.get("RUN_TYPE", "MORNING")  # MORNING or AFTERNOON
 
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash-latest")
-GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+# Model priority list — tries each in order until one works
+GEMINI_MODELS = [
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-2.0-flash-lite",
+]
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", GEMINI_MODELS[0])
+GEMINI_BASE  = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
 
 IST = pytz.timezone("Asia/Kolkata")
 
@@ -564,30 +570,44 @@ def score_macro(gift, global_data, vix, fii, part_oi, opts, tech, news):
 # GEMINI AI ANALYSIS
 # ─────────────────────────────────────────────
 def call_gemini(prompt):
-    try:
-        if not GEMINI_API_KEY:
-            print("ERROR: GEMINI_API_KEY is empty")
-            return None
-        payload = {
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.2, "maxOutputTokens": 1024}
-        }
-        print(f"  Calling Gemini ({GEMINI_MODEL})...")
-        r = requests.post(GEMINI_URL, json=payload, timeout=30)
-        print(f"  Gemini response status: {r.status_code}")
-        if r.status_code != 200:
-            print(f"  Gemini error body: {r.text[:500]}")
-            return None
-        data = r.json()
-        if "candidates" in data and data["candidates"]:
-            text = data["candidates"][0]["content"]["parts"][0]["text"]
-            print(f"  Gemini responded OK ({len(text)} chars)")
-            return text
-        print(f"  Gemini unexpected response: {json.dumps(data)[:500]}")
+    """Call Gemini API — tries multiple models in fallback order"""
+    if not GEMINI_API_KEY:
+        print("ERROR: GEMINI_API_KEY is empty")
         return None
-    except Exception as e:
-        print(f"  Gemini call exception: {e}")
-        return None
+
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 1024}
+    }
+
+    models_to_try = [GEMINI_MODEL] + [m for m in GEMINI_MODELS if m != GEMINI_MODEL]
+
+    for model in models_to_try:
+        try:
+            url = GEMINI_BASE.format(model=model, key=GEMINI_API_KEY)
+            print(f"  Trying Gemini model: {model}")
+            r = requests.post(url, json=payload, timeout=30)
+            print(f"  Response status: {r.status_code}")
+
+            if r.status_code == 200:
+                data = r.json()
+                if "candidates" in data and data["candidates"]:
+                    text = data["candidates"][0]["content"]["parts"][0]["text"]
+                    print(f"  Gemini OK with {model} ({len(text)} chars)")
+                    return text
+                print(f"  Unexpected response: {str(data)[:200]}")
+            elif r.status_code in (404, 429):
+                print(f"  {r.status_code} for {model} — trying next")
+                continue
+            else:
+                print(f"  Error {r.status_code}: {r.text[:200]}")
+                continue
+        except Exception as e:
+            print(f"  Exception with {model}: {e}")
+            continue
+
+    print("  All Gemini models failed — using macro fallback")
+    return None
 
 def build_prompt(display, macro, rzy, bb, vix, fii, opts, news, closes, atr_val):
     closes5 = [round(x) for x in closes[-5:]]
