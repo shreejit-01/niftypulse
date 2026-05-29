@@ -41,8 +41,8 @@ INDICES = {
                    "yahoo_fallback": "BANKNIFTY.NS"},
     "MIDCAP50":   {"yahoo": "^NSEMDCP50",          "display": "Nifty Midcap 50",   "opt": "NIFTY",
                    "yahoo_fallback": "NIFTY_MID_SELECT.NS"},
-    "SMALLCAP50": {"yahoo": "NIFTYSMLCAP50.NS",    "display": "Nifty Smallcap 50", "opt": "NIFTY",
-                   "yahoo_fallback": "^CNXSC"},
+    "SMALLCAP50": {"yahoo": "^NSEMDCP50",           "display": "Nifty Smallcap 50", "opt": "NIFTY",
+                   "yahoo_fallback": "NIFTYSMALLCAP50.NS"},
 }
 
 NEWS_FEEDS = [
@@ -577,7 +577,7 @@ def call_gemini(prompt):
 
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 2048}
+        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 4096}
     }
 
     models_to_try = [GEMINI_MODEL] + [m for m in GEMINI_MODELS if m != GEMINI_MODEL]
@@ -685,26 +685,114 @@ def parse_gemini_response(raw):
     if not raw:
         return None
     try:
-        # Strip markdown fences
+        # Strip markdown fences and whitespace
         clean = raw.replace("```json", "").replace("```", "").strip()
-        # Find JSON object boundaries
-        start = clean.find("{")
-        end   = clean.rfind("}")
-        if start == -1 or end == -1:
-            print(f"  No JSON braces found in response: {clean[:200]}")
+        # Find JSON boundaries — handle both { and unicode variants
+        start = -1
+        end   = -1
+        for i, ch in enumerate(clean):
+            if ch == "{" and start == -1:
+                start = i
+        for i in range(len(clean)-1, -1, -1):
+            if clean[i] == "}":
+                end = i
+                break
+
+        if start == -1 or end == -1 or end <= start:
+            print(f"  No valid JSON found. Response length: {len(clean)}")
+            print(f"  First 400 chars: {repr(clean[:400])}")
             return None
+
         json_str = clean[start:end+1]
+
+        # Check if JSON appears truncated
+        if json_str.count("{") != json_str.count("}"):
+            print(f"  JSON appears truncated — mismatched braces")
+            print(f"  Attempting partial parse...")
+
         result = json.loads(json_str)
-        # Validate required fields
+
         if "signal" not in result:
-            print(f"  JSON missing 'signal' field: {json_str[:200]}")
+            print(f"  Missing signal field")
             return None
+
+        # Ensure all required fields exist with defaults
+        result.setdefault("confidence", 50)
+        result.setdefault("signal_type", "MACRO_ONLY")
+        result.setdefault("entry", None)
+        result.setdefault("entry_zone_low", None)
+        result.setdefault("entry_zone_high", None)
+        result.setdefault("target", None)
+        result.setdefault("stop_loss", None)
+        result.setdefault("reasoning", "No reasoning provided")
+        result.setdefault("key_risk", "Unknown")
+        result.setdefault("macro_chart_agreement", "NEUTRAL")
+
+        print(f"  Parsed OK: signal={result['signal']} conf={result['confidence']}")
         return result
+
     except json.JSONDecodeError as e:
-        print(f"  JSON decode error: {e} | Raw: {raw[:300]}")
-        return None
+        print(f"  JSON decode error: {e}")
+        print(f"  Attempting to extract key fields manually...")
+        # Manual extraction fallback for truncated JSON
+        return extract_fields_manually(raw)
     except Exception as e:
-        print(f"  Parse error: {e} | Raw: {raw[:300]}")
+        print(f"  Parse exception: {e}")
+        return None
+
+
+def extract_fields_manually(raw):
+    """Fallback: extract key fields from truncated JSON using string search"""
+    import re  # noqa
+    result = {}
+    try:
+        # Extract signal
+        m = re.search(r'"signal"\s*:\s*"(BULLISH|BEARISH|NEUTRAL)"', raw)
+        if m: result["signal"] = m.group(1)
+        else: return None
+
+        # Extract confidence
+        m = re.search(r'"confidence"\s*:\s*(\d+)', raw)
+        result["confidence"] = int(m.group(1)) if m else 50
+
+        # Extract signal_type
+        m = re.search(r'"signal_type"\s*:\s*"([^"]+)"', raw)
+        result["signal_type"] = m.group(1) if m else "MACRO_ONLY"
+
+        # Extract entry
+        m = re.search(r'"entry"\s*:\s*(\d+)', raw)
+        result["entry"] = int(m.group(1)) if m else None
+
+        # Extract target
+        m = re.search(r'"target"\s*:\s*(\d+)', raw)
+        result["target"] = int(m.group(1)) if m else None
+
+        # Extract stop_loss
+        m = re.search(r'"stop_loss"\s*:\s*(\d+)', raw)
+        result["stop_loss"] = int(m.group(1)) if m else None
+
+        # Extract entry zones
+        m = re.search(r'"entry_zone_low"\s*:\s*(\d+)', raw)
+        result["entry_zone_low"] = int(m.group(1)) if m else None
+        m = re.search(r'"entry_zone_high"\s*:\s*(\d+)', raw)
+        result["entry_zone_high"] = int(m.group(1)) if m else None
+
+        # Extract reasoning
+        m = re.search(r'"reasoning"\s*:\s*"([^"]{10,})"', raw)
+        result["reasoning"] = m.group(1) if m else "Extracted from truncated response"
+
+        # Extract key_risk
+        m = re.search(r'"key_risk"\s*:\s*"([^"]{5,})"', raw)
+        result["key_risk"] = m.group(1) if m else "Unknown"
+
+        # Extract agreement
+        m = re.search(r'"macro_chart_agreement"\s*:\s*"(AGREE|CONFLICT|NEUTRAL)"', raw)
+        result["macro_chart_agreement"] = m.group(1) if m else "NEUTRAL"
+
+        print(f"  Manual extraction OK: signal={result['signal']}")
+        return result
+    except Exception as e:
+        print(f"  Manual extraction failed: {e}")
         return None
 
 # ─────────────────────────────────────────────
