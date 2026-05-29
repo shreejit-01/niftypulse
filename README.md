@@ -1,1 +1,1 @@
-# niftypulse
+# NiftyPulse Auto - Active
