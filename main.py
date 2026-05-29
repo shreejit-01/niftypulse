@@ -23,7 +23,7 @@ GOOGLE_SHEET_ID   = os.environ.get("GOOGLE_SHEET_ID", "")
 GOOGLE_CREDS_JSON = os.environ.get("GOOGLE_CREDS_JSON", "")
 RUN_TYPE          = os.environ.get("RUN_TYPE", "MORNING")  # MORNING or AFTERNOON
 
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash-latest")
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
 
 IST = pytz.timezone("Asia/Kolkata")
@@ -35,7 +35,7 @@ INDICES = {
                    "yahoo_fallback": "BANKNIFTY.NS"},
     "MIDCAP50":   {"yahoo": "^NSEMDCP50",          "display": "Nifty Midcap 50",   "opt": "NIFTY",
                    "yahoo_fallback": "NIFTY_MID_SELECT.NS"},
-    "SMALLCAP50": {"yahoo": "^NSESMCAP",           "display": "Nifty Smallcap 50", "opt": "NIFTY",
+    "SMALLCAP50": {"yahoo": "^CNXSC",              "display": "Nifty Smallcap 50", "opt": "NIFTY",
                    "yahoo_fallback": "NIFTY_SMLCAP_50.NS"},
 }
 
