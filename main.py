@@ -41,8 +41,8 @@ INDICES = {
                    "yahoo_fallback": "BANKNIFTY.NS"},
     "MIDCAP50":   {"yahoo": "^NSEMDCP50",          "display": "Nifty Midcap 50",   "opt": "NIFTY",
                    "yahoo_fallback": "NIFTY_MID_SELECT.NS"},
-    "SMALLCAP50": {"yahoo": "^CNXSC",              "display": "Nifty Smallcap 50", "opt": "NIFTY",
-                   "yahoo_fallback": "NIFTY_SMLCAP_50.NS"},
+    "SMALLCAP50": {"yahoo": "NIFTYSMLCAP50.NS",    "display": "Nifty Smallcap 50", "opt": "NIFTY",
+                   "yahoo_fallback": "^CNXSC"},
 }
 
 NEWS_FEEDS = [
@@ -577,7 +577,7 @@ def call_gemini(prompt):
 
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 1024}
+        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 2048}
     }
 
     models_to_try = [GEMINI_MODEL] + [m for m in GEMINI_MODELS if m != GEMINI_MODEL]
@@ -685,11 +685,26 @@ def parse_gemini_response(raw):
     if not raw:
         return None
     try:
+        # Strip markdown fences
         clean = raw.replace("```json", "").replace("```", "").strip()
-        start, end = clean.index("{"), clean.rindex("}")
-        return json.loads(clean[start:end+1])
+        # Find JSON object boundaries
+        start = clean.find("{")
+        end   = clean.rfind("}")
+        if start == -1 or end == -1:
+            print(f"  No JSON braces found in response: {clean[:200]}")
+            return None
+        json_str = clean[start:end+1]
+        result = json.loads(json_str)
+        # Validate required fields
+        if "signal" not in result:
+            print(f"  JSON missing 'signal' field: {json_str[:200]}")
+            return None
+        return result
+    except json.JSONDecodeError as e:
+        print(f"  JSON decode error: {e} | Raw: {raw[:300]}")
+        return None
     except Exception as e:
-        print(f"Gemini parse error: {e}")
+        print(f"  Parse error: {e} | Raw: {raw[:300]}")
         return None
 
 # ─────────────────────────────────────────────
